@@ -1,47 +1,126 @@
 # Mattermost SQLite Archiver
 
-Kleiner Archiver für Mattermost-Teams: Er sammelt alle Nachrichten aus Channels, in denen ein Bot/User Mitglied ist, und speichert sie maschinenlesbar in SQLite.
+A small Mattermost archive tool that stores readable Mattermost messages in a local SQLite database.
 
-## Ziel
+It is designed for simple, machine-readable exports of Mattermost team/channel history without running a separate service or database server. The project was vibe coded and intentionally kept small.
 
-- Mattermost API mit Bot-/User-Token abfragen
-- Teams und Channels automatisch erkennen
-- neue Channels automatisch aufnehmen
-- komplette Channel-History backfillen
-- neue Posts inkrementell nachziehen
-- Rohdaten verlustarm in SQLite speichern
-- keine Secrets im Repository speichern
+## What it does
 
-## Erwartete Umgebung
+- Authenticates against the Mattermost REST API with a user or bot token
+- Discovers all teams visible to that token
+- Discovers all channels visible to that token
+- Backfills the full message history for newly discovered channels
+- Uses `last_post_at` and local watermarks to skip unchanged channels
+- Incrementally syncs new or changed posts on later runs
+- Stores normalized rows plus original raw JSON in SQLite
+- Keeps credentials out of the repository
 
-Die Laufzeit liest Konfiguration aus Umgebungsvariablen:
+## Use cases
+
+- Personal or team Mattermost message archive
+- SQLite export for search, analysis, reporting, or backup workflows
+- Lightweight Mattermost channel history collector
+- Local-first archive without PostgreSQL, Elasticsearch, or another server process
+
+## Requirements
+
+- Python 3.11+
+- A Mattermost server
+- A Mattermost personal access token or bot token
+- Read access to the channels that should be archived
+
+No external Python runtime dependencies are required for normal sync runs.
+
+## Installation
+
+Clone the repository:
+
+```sh
+git clone <repository-url>
+cd mattermost-sqlite-archiver
+```
+
+Create a local `.env` file:
+
+```sh
+cp .env.example .env
+```
+
+Edit `.env`:
 
 ```env
 MATTERMOST_URL=https://mattermost.example.com
-MATTERMOST_TOKEN=...
+MATTERMOST_TOKEN=replace-me
+ARCHIVER_DB_PATH=data/mattermost.sqlite
 ```
 
-## Geplanter Ablauf
+`ARCHIVER_DB_PATH` is optional. If omitted, the default is:
 
-1. `GET /api/v4/users/me` — Token prüfen
-2. `GET /api/v4/users/me/teams` — Teams des Bots finden
-3. `GET /api/v4/users/me/teams/{team_id}/channels` — Channels finden, in denen der Bot Mitglied ist
-4. Für neue Channels: komplette History backfillen
-5. Für bekannte Channels: `last_post_at` gegen lokale Watermark prüfen
-6. Neue Posts speichern
+```text
+data/mattermost.sqlite
+```
 
-## Channel-Handling
+## Running a sync
 
-Das Script soll keine statische Channel-Liste brauchen.
+Run one sync:
 
-Wenn der Bot in Mattermost zu einem neuen Channel hinzugefügt wird:
+```sh
+python3 -m mattermost_archiver.sync
+```
 
-- der nächste Lauf erkennt den Channel automatisch
-- der Channel wird in SQLite registriert
-- die komplette History wird backfilled
-- danach läuft der Channel inkrementell weiter
+Use a custom env file:
 
-## Vorgeschlagene SQLite-Struktur
+```sh
+python3 -m mattermost_archiver.sync --env-file /path/to/.env
+```
+
+Use a custom Mattermost page size:
+
+```sh
+python3 -m mattermost_archiver.sync --per-page 200
+```
+
+The command loads `.env`, initializes the SQLite database if needed, discovers visible teams/channels, then archives posts.
+
+Example output:
+
+```text
+Sync complete: channels_seen=12 backfilled=1 incremental=2 skipped=9 posts_saved=143 errors=0
+```
+
+## How channel discovery works
+
+The tool does not require a static channel list.
+
+On every run it asks Mattermost:
+
+1. Which teams can this token access?
+2. Which channels can this token access in those teams?
+3. Which channels have new posts?
+
+If the token gains access to a new channel, the next run discovers it automatically and starts a full backfill for that channel.
+
+## Backfill behavior
+
+For a newly discovered channel, the tool fetches full history with Mattermost pagination:
+
+```text
+GET /api/v4/channels/{channel_id}/posts?page=0&per_page=200
+GET /api/v4/channels/{channel_id}/posts?page=1&per_page=200
+...
+```
+
+Posts are upserted by Mattermost post ID, so reruns are safe.
+
+After the backfill is complete, future runs use the stored channel watermark and the Mattermost `last_post_at` value to decide whether a channel can be skipped.
+
+## Data scope
+
+The archive contains messages the configured token can read through the Mattermost API.
+
+That can include public channels, private channels, direct messages, or group messages depending on the token's access. The tool does not apply an additional channel-type filter.
+
+## SQLite schema
 
 ### `channels`
 
@@ -112,80 +191,51 @@ CREATE TABLE users (
 );
 ```
 
-## Sync-Logik
+## Inspecting the archive
 
-```text
-für jeden Lauf:
-  Teams holen
-  Channels je Team holen
-  channels.last_post_at aktualisieren
-
-  für jeden Channel:
-    wenn neu:
-      komplette History backfillen
-    sonst wenn backfill_complete = 0:
-      Backfill fortsetzen
-    sonst wenn channel.last_post_at <= watermark.last_post_create_at:
-      Channel überspringen
-    sonst:
-      Posts seit watermark.last_post_create_at holen
-```
-
-## Backfill
-
-Mattermost liefert Posts paginiert, typischerweise neueste zuerst:
-
-```text
-GET /api/v4/channels/{channel_id}/posts?page=0&per_page=200
-GET /api/v4/channels/{channel_id}/posts?page=1&per_page=200
-...
-```
-
-Da `posts.id` Primary Key ist, ist die Reihenfolge beim Speichern unkritisch.
-
-## Datenumfang
-
-Archiviert werden alle Nachrichten, die der konfigurierte Bot/User über die Mattermost API lesen kann. Die Channel-Liste wird bei jedem Lauf aus der aktuellen Mitgliedschaft abgeleitet.
-
-## Initialisierung
+Count archived channels:
 
 ```sh
-python3 scripts/init_db.py
+sqlite3 data/mattermost.sqlite 'select count(*) from channels;'
 ```
 
-Standardmäßig wird die Datenbank hier erstellt:
-
-```text
-data/mattermost.sqlite
-```
-
-Alternativ kann der Pfad gesetzt werden:
+Count archived posts:
 
 ```sh
-ARCHIVER_DB_PATH=/path/to/archive.sqlite python3 scripts/init_db.py
+sqlite3 data/mattermost.sqlite 'select count(*) from posts;'
 ```
 
-## Sync ausführen
+Show recent posts:
 
 ```sh
-python3 -m mattermost_archiver.sync
+sqlite3 data/mattermost.sqlite \
+  'select channel_id, datetime(create_at / 1000, "unixepoch"), substr(message, 1, 80) from posts order by create_at desc limit 10;'
 ```
 
-Das Modul lädt standardmäßig `.env`, initialisiert die SQLite-Datenbank und führt einen Sync-Lauf aus.
+## Development
 
-Optionen:
+Create a virtual environment and install test dependencies:
 
 ```sh
-python3 -m mattermost_archiver.sync --env-file /path/to/.env --per-page 200
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install pytest
 ```
 
-## Sicherheit
+Run tests:
 
-- Token nur über `.env` oder Umgebungsvariablen
-- `.env` niemals committen
-- SQLite-Datenbanken nicht committen
-- Rohdaten lokal halten und Retention bewusst festlegen
+```sh
+python -m pytest tests -q
+```
 
-## Status
+## Safety notes
 
-Initiales Repository. Die Datenbank-Initialisierung ist vorhanden.
+- Do not commit `.env` files
+- Do not commit SQLite databases
+- Treat archived messages as sensitive data
+- Store tokens in environment variables or local `.env` files only
+- Review access rights on the Mattermost side before running a backfill
+
+## License
+
+No license has been selected yet.
