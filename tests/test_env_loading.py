@@ -1,6 +1,18 @@
 import os
+import re
 
 from mattermost_archiver import sync
+
+
+def test_main_prints_timestamped_summary(monkeypatch, capsys):
+    monkeypatch.setattr(sync, "run_from_env", lambda **kwargs: sync.SyncResult(channels_seen=1, channels_skipped=1))
+
+    sync.main([])
+
+    output = capsys.readouterr().out.strip()
+    assert re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z Sync complete: ", output)
+    assert "channels_seen=1" in output
+    assert "skipped=1" in output
 
 
 def test_load_dotenv_sets_missing_values(tmp_path, monkeypatch):

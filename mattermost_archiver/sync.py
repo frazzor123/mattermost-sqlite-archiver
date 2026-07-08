@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import os
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -48,6 +49,11 @@ def env_required(name: str) -> str:
 def env_db_path() -> Path:
     """Return configured database path."""
     return Path(os.environ.get("ARCHIVER_DB_PATH", DEFAULT_DB_PATH)).expanduser()
+
+
+def log_timestamp() -> str:
+    """Return current UTC timestamp for one-line sync output."""
+    return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
 class MattermostAPI(Protocol):
@@ -322,7 +328,7 @@ def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
     result = run_from_env(dotenv_path=args.env_file, per_page=args.per_page)
     print(
-        "Sync complete: "
+        f"{log_timestamp()} Sync complete: "
         f"channels_seen={result.channels_seen} "
         f"backfilled={result.channels_backfilled} "
         f"incremental={result.channels_incremental} "

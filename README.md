@@ -87,7 +87,7 @@ The command loads `.env`, initializes the SQLite database if needed, discovers v
 Example output:
 
 ```text
-Sync complete: channels_seen=12 backfilled=1 incremental=2 skipped=9 posts_saved=143 errors=0
+2026-07-08T12:00:00Z Sync complete: channels_seen=12 backfilled=1 incremental=2 skipped=9 posts_saved=143 errors=0
 ```
 
 ## How channel discovery works
