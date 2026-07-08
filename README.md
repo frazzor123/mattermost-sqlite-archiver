@@ -2,8 +2,6 @@
 
 Kleiner Archiver für Mattermost-Teams: Er sammelt alle Nachrichten aus Channels, in denen ein Bot/User Mitglied ist, und speichert sie maschinenlesbar in SQLite.
 
-Der Fokus liegt bewusst nur auf **Ingestion und Archivierung**. Zusammenfassungen, Projektwissen und Agent-Auswertung kommen später separat.
-
 ## Ziel
 
 - Mattermost API mit Bot-/User-Token abfragen
