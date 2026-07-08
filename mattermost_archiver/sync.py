@@ -2,12 +2,52 @@
 
 from __future__ import annotations
 
+import argparse
+import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Protocol
 
-from mattermost_archiver import db
+from mattermost_archiver import api, db
 
 DEFAULT_PER_PAGE = 200
+DEFAULT_DB_PATH = Path("data/mattermost.sqlite")
+
+
+def load_dotenv(path: str | Path = ".env") -> int:
+    """Load simple KEY=VALUE pairs from a dotenv file without overriding env."""
+    env_path = Path(path)
+    if not env_path.exists():
+        return 0
+
+    loaded = 0
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, value = stripped.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if not key or key in os.environ:
+            continue
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1]
+        os.environ[key] = value
+        loaded += 1
+    return loaded
+
+
+def env_required(name: str) -> str:
+    """Return a required environment variable or raise a clear error."""
+    value = os.environ.get(name)
+    if not value:
+        raise RuntimeError(f"Missing required environment variable: {name}")
+    return value
+
+
+def env_db_path() -> Path:
+    """Return configured database path."""
+    return Path(os.environ.get("ARCHIVER_DB_PATH", DEFAULT_DB_PATH)).expanduser()
 
 
 class MattermostAPI(Protocol):
@@ -181,3 +221,45 @@ def sync_all(client: MattermostAPI, conn, *, per_page: int = DEFAULT_PER_PAGE, r
 
     conn.commit()
     return result
+
+
+def run_from_env(*, dotenv_path: str | Path = ".env", per_page: int = DEFAULT_PER_PAGE) -> SyncResult:
+    """Load configuration, run a full sync, and return counters."""
+    load_dotenv(dotenv_path)
+    client = api.MattermostClient(
+        base_url=env_required("MATTERMOST_URL"),
+        token=env_required("MATTERMOST_TOKEN"),
+    )
+    conn = db.connect(env_db_path())
+    try:
+        db.init_db(conn)
+        return sync_all(client, conn, per_page=per_page)
+    finally:
+        conn.close()
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """Build command-line parser for direct module execution."""
+    parser = argparse.ArgumentParser(description="Sync readable Mattermost channel posts into SQLite.")
+    parser.add_argument("--env-file", default=".env", help="dotenv file to load before reading environment")
+    parser.add_argument("--per-page", type=int, default=DEFAULT_PER_PAGE, help="Mattermost posts page size")
+    return parser
+
+
+def main(argv: list[str] | None = None) -> None:
+    """Run one sync from environment configuration."""
+    args = build_parser().parse_args(argv)
+    result = run_from_env(dotenv_path=args.env_file, per_page=args.per_page)
+    print(
+        "Sync complete: "
+        f"channels_seen={result.channels_seen} "
+        f"backfilled={result.channels_backfilled} "
+        f"incremental={result.channels_incremental} "
+        f"skipped={result.channels_skipped} "
+        f"posts_saved={result.posts_saved} "
+        f"errors={result.errors}"
+    )
+
+
+if __name__ == "__main__":
+    main()

@@ -165,6 +165,20 @@ Alternativ kann der Pfad gesetzt werden:
 ARCHIVER_DB_PATH=/path/to/archive.sqlite python3 scripts/init_db.py
 ```
 
+## Sync ausführen
+
+```sh
+python3 -m mattermost_archiver.sync
+```
+
+Das Modul lädt standardmäßig `.env`, initialisiert die SQLite-Datenbank und führt einen Sync-Lauf aus.
+
+Optionen:
+
+```sh
+python3 -m mattermost_archiver.sync --env-file /path/to/.env --per-page 200
+```
+
 ## Sicherheit
 
 - Token nur über `.env` oder Umgebungsvariablen
