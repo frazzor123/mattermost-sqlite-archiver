@@ -44,6 +44,7 @@ class MattermostClient:
             headers={
                 "Authorization": f"Bearer {self.token}",
                 "Accept": "application/json",
+                "User-Agent": "mattermost-sqlite-archiver",
             },
             method="GET",
         )
