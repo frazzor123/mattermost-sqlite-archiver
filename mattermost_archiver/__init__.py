@@ -1,0 +1,1 @@
+"""Mattermost SQLite Archiver package."""

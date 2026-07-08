@@ -143,14 +143,35 @@ GET /api/v4/channels/{channel_id}/posts?page=1&per_page=200
 
 Da `posts.id` Primary Key ist, ist die Reihenfolge beim Speichern unkritisch.
 
+## Datenumfang
+
+Archiviert werden alle Nachrichten, die der konfigurierte Bot/User über die Mattermost API lesen kann. Die Channel-Liste wird bei jedem Lauf aus der aktuellen Mitgliedschaft abgeleitet.
+
+## Initialisierung
+
+```sh
+python3 scripts/init_db.py
+```
+
+Standardmäßig wird die Datenbank hier erstellt:
+
+```text
+data/mattermost.sqlite
+```
+
+Alternativ kann der Pfad gesetzt werden:
+
+```sh
+ARCHIVER_DB_PATH=/path/to/archive.sqlite python3 scripts/init_db.py
+```
+
 ## Sicherheit
 
 - Token nur über `.env` oder Umgebungsvariablen
 - `.env` niemals committen
-- keine DMs archivieren, solange nicht ausdrücklich gewünscht
-- Private Channels nur archivieren, wenn Bot-Mitgliedschaft bewusst gesetzt ist
-- Rohdaten lokal halten und später Retention definieren
+- SQLite-Datenbanken nicht committen
+- Rohdaten lokal halten und Retention bewusst festlegen
 
 ## Status
 
-Initiales Repository. Noch kein Produktionscode.
+Initiales Repository. Die Datenbank-Initialisierung ist vorhanden.
