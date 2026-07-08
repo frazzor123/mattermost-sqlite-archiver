@@ -57,6 +57,8 @@ class MattermostAPI(Protocol):
 
     def get_my_channels(self, team_id: str) -> list[dict[str, Any]]: ...
 
+    def get_user(self, user_id: str) -> dict[str, Any]: ...
+
     def get_channel_posts(
         self,
         channel_id: str,
@@ -121,6 +123,52 @@ def save_posts(conn, posts: list[dict[str, Any]], *, ingested_at: int | None = N
     return len(posts)
 
 
+def sync_users_for_posts(
+    client: MattermostAPI,
+    conn,
+    posts: list[dict[str, Any]],
+    *,
+    seen_user_ids: set[str],
+    seen_at: int | None = None,
+) -> int:
+    """Fetch and upsert users referenced by posts, once per run."""
+    synced = 0
+    user_ids = sorted({str(post["user_id"]) for post in posts if post.get("user_id")})
+    for user_id in user_ids:
+        if user_id in seen_user_ids:
+            continue
+        seen_user_ids.add(user_id)
+        try:
+            user = client.get_user(user_id)
+        except Exception:
+            continue
+        db.upsert_user(conn, user, seen_at=seen_at)
+        synced += 1
+    return synced
+
+
+def sync_missing_users(
+    client: MattermostAPI,
+    conn,
+    *,
+    seen_user_ids: set[str],
+    seen_at: int | None = None,
+) -> int:
+    """Backfill users for existing posts that were archived before user sync existed."""
+    synced = 0
+    for user_id in db.get_missing_user_ids(conn):
+        if user_id in seen_user_ids:
+            continue
+        seen_user_ids.add(user_id)
+        try:
+            user = client.get_user(user_id)
+        except Exception:
+            continue
+        db.upsert_user(conn, user, seen_at=seen_at)
+        synced += 1
+    return synced
+
+
 def backfill_channel(
     client: MattermostAPI,
     conn,
@@ -128,11 +176,13 @@ def backfill_channel(
     *,
     per_page: int = DEFAULT_PER_PAGE,
     run_at: int | None = None,
+    seen_user_ids: set[str] | None = None,
 ) -> int:
     """Fetch complete channel history and mark backfill complete."""
     page = 0
     total = 0
     latest_create_at = 0
+    seen_user_ids = seen_user_ids if seen_user_ids is not None else set()
 
     while True:
         response = client.get_channel_posts(channel_id, page=page, per_page=per_page)
@@ -141,6 +191,7 @@ def backfill_channel(
             break
 
         save_posts(conn, posts, ingested_at=run_at)
+        sync_users_for_posts(client, conn, posts, seen_user_ids=seen_user_ids, seen_at=run_at)
         total += len(posts)
         latest_create_at = max(latest_create_at, max_create_at(posts))
 
@@ -167,11 +218,14 @@ def incremental_sync_channel(
     since_ms: int,
     *,
     run_at: int | None = None,
+    seen_user_ids: set[str] | None = None,
 ) -> int:
     """Fetch posts changed since a timestamp and update watermark."""
     response = client.get_channel_posts_since(channel_id, since_ms)
     posts = posts_from_response(response)
+    seen_user_ids = seen_user_ids if seen_user_ids is not None else set()
     save_posts(conn, posts, ingested_at=run_at)
+    sync_users_for_posts(client, conn, posts, seen_user_ids=seen_user_ids, seen_at=run_at)
 
     latest_create_at = max_create_at(posts, fallback=since_ms)
     db.update_watermark(
@@ -194,6 +248,7 @@ def sync_all(client: MattermostAPI, conn, *, per_page: int = DEFAULT_PER_PAGE, r
     channels = discover_channels(client, conn, seen_at=run_at)
     result.teams_seen = len(client.get_my_teams())
     result.channels_seen = len(channels)
+    seen_user_ids: set[str] = set()
 
     for channel in channels:
         channel_id = channel["id"]
@@ -203,14 +258,28 @@ def sync_all(client: MattermostAPI, conn, *, per_page: int = DEFAULT_PER_PAGE, r
 
         try:
             if not watermark["backfill_complete"]:
-                count = backfill_channel(client, conn, channel_id, per_page=per_page, run_at=run_at)
+                count = backfill_channel(
+                    client,
+                    conn,
+                    channel_id,
+                    per_page=per_page,
+                    run_at=run_at,
+                    seen_user_ids=seen_user_ids,
+                )
                 result.channels_backfilled += 1
             elif last_post_at <= last_post_create_at:
                 db.update_watermark(conn, channel_id, last_sync_at=run_at, last_error=None)
                 result.channels_skipped += 1
                 continue
             else:
-                count = incremental_sync_channel(client, conn, channel_id, last_post_create_at, run_at=run_at)
+                count = incremental_sync_channel(
+                    client,
+                    conn,
+                    channel_id,
+                    last_post_create_at,
+                    run_at=run_at,
+                    seen_user_ids=seen_user_ids,
+                )
                 result.channels_incremental += 1
 
             result.posts_seen += count
@@ -218,6 +287,8 @@ def sync_all(client: MattermostAPI, conn, *, per_page: int = DEFAULT_PER_PAGE, r
         except Exception as exc:
             result.errors += 1
             db.update_watermark(conn, channel_id, last_sync_at=run_at, last_error=str(exc))
+
+    sync_missing_users(client, conn, seen_user_ids=seen_user_ids, seen_at=run_at)
 
     conn.commit()
     return result

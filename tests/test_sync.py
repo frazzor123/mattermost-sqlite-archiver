@@ -6,23 +6,28 @@ class FakeClient:
         self.teams = [{"id": "team-id"}]
         self.channels = {
             "team-id": [
-                {"id": "channel-id", "name": "town-square", "last_post_at": 300},
+                {"id": "channel-id", "name": "town-square", "display_name": "Town Square", "last_post_at": 300},
             ]
         }
         self.pages = {
             ("channel-id", 0): [
-                {"id": "post-3", "channel_id": "channel-id", "create_at": 300, "message": "three"},
-                {"id": "post-2", "channel_id": "channel-id", "create_at": 200, "message": "two"},
+                {"id": "post-3", "channel_id": "channel-id", "user_id": "user-2", "create_at": 300, "message": "three"},
+                {"id": "post-2", "channel_id": "channel-id", "user_id": "user-1", "create_at": 200, "message": "two"},
             ],
             ("channel-id", 1): [
-                {"id": "post-1", "channel_id": "channel-id", "create_at": 100, "message": "one"},
+                {"id": "post-1", "channel_id": "channel-id", "user_id": "user-1", "create_at": 100, "message": "one"},
             ],
         }
         self.since = {}
+        self.users = {
+            "user-1": {"id": "user-1", "username": "userone", "first_name": "User", "last_name": "One"},
+            "user-2": {"id": "user-2", "username": "usertwo", "first_name": "User", "last_name": "Two"},
+        }
         self.teams_calls = 0
         self.channels_calls = 0
         self.posts_calls = []
         self.since_calls = []
+        self.user_calls = []
 
     def get_my_teams(self):
         self.teams_calls += 1
@@ -47,6 +52,10 @@ class FakeClient:
             "order": [post["id"] for post in posts],
             "posts": {post["id"]: post for post in posts},
         }
+
+    def get_user(self, user_id):
+        self.user_calls.append(user_id)
+        return self.users[user_id]
 
 
 def make_conn(tmp_path):
@@ -81,6 +90,12 @@ def test_sync_all_backfills_new_channel(tmp_path):
     stats = db.get_stats(conn)
     assert stats["channels"] == 1
     assert stats["posts"] == 3
+    assert stats["users"] == 2
+    assert sorted(client.user_calls) == ["user-1", "user-2"]
+
+    enriched = conn.execute("SELECT username, channel_display_name FROM posts_enriched WHERE id = 'post-1'").fetchone()
+    assert enriched["username"] == "userone"
+    assert enriched["channel_display_name"] == "Town Square"
 
     watermark = db.get_watermark(conn, "channel-id")
     assert watermark is not None
@@ -122,6 +137,20 @@ def test_sync_all_incremental_when_last_post_at_is_newer(tmp_path):
     watermark = db.get_watermark(conn, "channel-id")
     assert watermark is not None
     assert watermark["last_post_create_at"] == 400
+
+
+def test_sync_all_populates_missing_users_for_existing_posts(tmp_path):
+    conn = make_conn(tmp_path)
+    client = FakeClient()
+    db.upsert_channel(conn, {"id": "channel-id", "last_post_at": 300})
+    db.upsert_post(conn, {"id": "post-1", "channel_id": "channel-id", "user_id": "user-1", "create_at": 100})
+    db.update_watermark(conn, "channel-id", backfill_complete=True, last_post_create_at=300)
+
+    result = sync.sync_all(client, conn, per_page=2, run_at=1000)
+
+    assert result.channels_skipped == 1
+    assert db.get_stats(conn)["users"] == 1
+    assert client.user_calls == ["user-1"]
 
 
 def test_sync_all_records_channel_errors(tmp_path):

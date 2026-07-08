@@ -13,6 +13,8 @@ It is designed for simple, machine-readable exports of Mattermost team/channel h
 - Uses `last_post_at` and local watermarks to skip unchanged channels
 - Incrementally syncs new or changed posts on later runs
 - Stores normalized rows plus original raw JSON in SQLite
+- Syncs referenced users into a `users` table
+- Provides a `posts_enriched` view with channel and user names
 - Keeps credentials out of the repository
 
 ## Use cases
@@ -191,6 +193,26 @@ CREATE TABLE users (
 );
 ```
 
+### `posts_enriched`
+
+`posts_enriched` is a convenience view that joins posts with channel and user metadata:
+
+```sql
+CREATE VIEW posts_enriched AS
+SELECT
+  posts.*,
+  channels.name AS channel_name,
+  channels.display_name AS channel_display_name,
+  channels.type AS channel_type,
+  users.username AS username,
+  users.first_name AS first_name,
+  users.last_name AS last_name,
+  users.nickname AS nickname
+FROM posts
+LEFT JOIN channels ON channels.id = posts.channel_id
+LEFT JOIN users ON users.id = posts.user_id;
+```
+
 ## Inspecting the archive
 
 Count archived channels:
@@ -205,11 +227,11 @@ Count archived posts:
 sqlite3 data/mattermost.sqlite 'select count(*) from posts;'
 ```
 
-Show recent posts:
+Show recent enriched posts:
 
 ```sh
 sqlite3 data/mattermost.sqlite \
-  'select channel_id, datetime(create_at / 1000, "unixepoch"), substr(message, 1, 80) from posts order by create_at desc limit 10;'
+  'select channel_display_name, username, datetime(create_at / 1000, "unixepoch"), substr(message, 1, 80) from posts_enriched order by create_at desc limit 10;'
 ```
 
 ## Development

@@ -220,6 +220,24 @@ def update_watermark(
     )
 
 
+def get_missing_user_ids(conn: sqlite3.Connection, *, limit: int | None = None) -> list[str]:
+    """Return distinct post user IDs that are not present in users."""
+    sql = """
+        SELECT DISTINCT posts.user_id
+        FROM posts
+        LEFT JOIN users ON users.id = posts.user_id
+        WHERE posts.user_id IS NOT NULL
+          AND posts.user_id != ''
+          AND users.id IS NULL
+        ORDER BY posts.user_id
+    """
+    params: tuple[int, ...] = ()
+    if limit is not None:
+        sql += " LIMIT ?"
+        params = (limit,)
+    return [row["user_id"] for row in conn.execute(sql, params).fetchall()]
+
+
 def get_stats(conn: sqlite3.Connection) -> dict[str, int | None]:
     """Return basic archive counts and latest post timestamp."""
     row = conn.execute(

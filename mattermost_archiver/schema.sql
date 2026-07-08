@@ -67,3 +67,17 @@ ON posts(root_id);
 
 CREATE INDEX IF NOT EXISTS idx_posts_create
 ON posts(create_at);
+
+CREATE VIEW IF NOT EXISTS posts_enriched AS
+SELECT
+  posts.*,
+  channels.name AS channel_name,
+  channels.display_name AS channel_display_name,
+  channels.type AS channel_type,
+  users.username AS username,
+  users.first_name AS first_name,
+  users.last_name AS last_name,
+  users.nickname AS nickname
+FROM posts
+LEFT JOIN channels ON channels.id = posts.channel_id
+LEFT JOIN users ON users.id = posts.user_id;

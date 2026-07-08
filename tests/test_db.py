@@ -91,6 +91,34 @@ def test_watermark_lifecycle(tmp_path):
     assert updated["last_error"] is None
 
 
+def test_posts_enriched_view_joins_channel_and_user(tmp_path):
+    conn = make_conn(tmp_path)
+    db.upsert_channel(conn, {"id": "channel-id", "display_name": "Town Square", "name": "town-square"})
+    db.upsert_user(conn, {"id": "user-id", "username": "user", "first_name": "First", "last_name": "Last"})
+    db.upsert_post(
+        conn,
+        {"id": "post-id", "channel_id": "channel-id", "user_id": "user-id", "create_at": 123, "message": "hello"},
+    )
+
+    row = conn.execute("SELECT * FROM posts_enriched WHERE id = 'post-id'").fetchone()
+
+    assert row["channel_display_name"] == "Town Square"
+    assert row["channel_name"] == "town-square"
+    assert row["username"] == "user"
+    assert row["first_name"] == "First"
+    assert row["last_name"] == "Last"
+
+
+def test_get_missing_user_ids(tmp_path):
+    conn = make_conn(tmp_path)
+    db.upsert_channel(conn, {"id": "channel-id"})
+    db.upsert_post(conn, {"id": "post-1", "channel_id": "channel-id", "user_id": "user-1", "create_at": 1})
+    db.upsert_post(conn, {"id": "post-2", "channel_id": "channel-id", "user_id": "user-2", "create_at": 2})
+    db.upsert_user(conn, {"id": "user-1", "username": "userone"})
+
+    assert db.get_missing_user_ids(conn) == ["user-2"]
+
+
 def test_get_stats(tmp_path):
     conn = make_conn(tmp_path)
     db.upsert_channel(conn, {"id": "channel-id"})

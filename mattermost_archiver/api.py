@@ -77,6 +77,10 @@ class MattermostClient:
         """Return channels in one team visible to the authenticated user."""
         return self._request(f"/users/me/teams/{team_id}/channels")
 
+    def get_user(self, user_id: str) -> dict[str, Any]:
+        """Return one user by Mattermost user ID."""
+        return self._request(f"/users/{user_id}")
+
     def get_channel_posts(
         self,
         channel_id: str,

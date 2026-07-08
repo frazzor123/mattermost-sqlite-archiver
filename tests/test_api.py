@@ -96,6 +96,20 @@ def test_get_channel_posts_adds_pagination(monkeypatch):
     assert seen["url"] == "https://mattermost.example.com/api/v4/channels/channel-id/posts?page=2&per_page=50"
 
 
+def test_get_user_uses_user_id(monkeypatch):
+    seen = {}
+
+    def fake_urlopen(request, timeout):
+        seen["url"] = request.full_url
+        return FakeResponse(b'{"id":"user-id","username":"user"}')
+
+    monkeypatch.setattr(api, "urlopen", fake_urlopen)
+    client = api.MattermostClient("https://mattermost.example.com", "token")
+
+    assert client.get_user("user-id") == {"id": "user-id", "username": "user"}
+    assert seen["url"] == "https://mattermost.example.com/api/v4/users/user-id"
+
+
 def test_get_channel_posts_since_adds_since(monkeypatch):
     seen = {}
 
